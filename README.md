@@ -33,7 +33,7 @@ pip install spotipy selenium webdriver-manager
 Simply update the `test_url` inside the `if __name__ == "__main__":` block with your desired Setlist.fm concert link, then run the script:
 
 ```bash
-python script_name.py
+python main.py
 ```
 *On the first run, a browser window will open asking you to authenticate with your Spotify account. Once authorized, copy the redirected URL from your browser's address bar and paste it into the terminal prompt.*
 
