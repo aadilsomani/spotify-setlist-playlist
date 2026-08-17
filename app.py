@@ -2,28 +2,26 @@ import os
 import re
 from typing import List
 from difflib import SequenceMatcher
-from fastapi import FastAPI, Request, HTTPException, Response
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import requests
 import spotipy
-from spotipy.oauth2 import SpotifyOAuth
+from spotipy.oauth2 import SpotifyClientCredentials
 
 # Config from env
 SPOTIPY_CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID")
 SPOTIPY_CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET")
-SPOTIPY_REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI")
 SETLISTFM_API_KEY = os.getenv("SETLISTFM_API_KEY")
 
-if not SPOTIPY_CLIENT_ID or not SPOTIPY_CLIENT_SECRET or not SPOTIPY_REDIRECT_URI:
-    raise RuntimeError("Please set SPOTIPY_CLIENT_ID, SPOTIPY_CLIENT_SECRET, and SPOTIPY_REDIRECT_URI")
+if not SPOTIPY_CLIENT_ID or not SPOTIPY_CLIENT_SECRET:
+    raise RuntimeError("Please set SPOTIPY_CLIENT_ID and SPOTIPY_CLIENT_SECRET")
 
-SCOPE = "playlist-modify-public playlist-modify-private"
-
-app = FastAPI(title="Setlist -> Spotify")
+app = FastAPI(title="Setlist -> Spotify Search Engine")
 
 # CORS
-origins = os.getenv("CORS_ORIGINS", "*").split(",")
+raw_origins = os.getenv("CORS_ORIGINS", "*").split(",")
+origins = [origin.strip().strip('"').strip("'").rstrip("/") for origin in raw_origins if origin.strip()]
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -32,76 +30,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-def get_spotify_oauth():
-    """Helper to create a fresh, un-cached OAuth manager every time."""
-    return SpotifyOAuth(
+def get_spotify_client():
+    """App-level client. Requires no user login, creates no playlists on your profile!"""
+    client_credentials_manager = SpotifyClientCredentials(
         client_id=SPOTIPY_CLIENT_ID,
-        client_secret=SPOTIPY_CLIENT_SECRET,
-        redirect_uri=SPOTIPY_REDIRECT_URI,
-        scope=SCOPE,
-        cache_path=None,  # Disables local .cache file writes
-        show_dialog=True,
+        client_secret=SPOTIPY_CLIENT_SECRET
     )
-
-# ------------------------------------------------------------------
-# AUTHENTICATION ROUTES
-# ------------------------------------------------------------------
-
-@app.get("/login")
-def login():
-    sp_oauth = get_spotify_oauth()
-    auth_url = sp_oauth.get_authorize_url()
-    return RedirectResponse(auth_url)
-
-
-@app.get("/callback")
-def callback(request: Request):
-    code = request.query_params.get("code")
-    error = request.query_params.get("error")
-
-    if error:
-        raise HTTPException(status_code=400, detail=f"Spotify auth error: {error}")
-    if not code:
-        raise HTTPException(status_code=400, detail="Missing code in callback")
-
-    sp_oauth = get_spotify_oauth()
-    try:
-        token_info = sp_oauth.get_access_token(code, check_cache=False)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to exchange code: {e}")
-
-    access_token = token_info.get("access_token")
-    if not access_token:
-        raise HTTPException(status_code=400, detail="Failed to get access token from Spotify")
-
-    response = RedirectResponse("https://aadilsomani.com/setlisttoplaylist")
-    secure_cookie = SPOTIPY_REDIRECT_URI.startswith("https://")
-    response.set_cookie(
-        key="spotify_token",
-        value=access_token,
-        httponly=True,
-        secure=True,
-        samesite="lax",
-        domain= ".aadilsomani.com",
-        path="/",
-        max_age=3600
-    )
-    return response
-
-
-@app.get("/logout")
-def logout():
-    # 1. Redirect back to your frontend page
-    response = RedirectResponse("https://aadilsomani.com/setlisttoplaylist")
-    
-    # 2. Delete the cookie (MUST include matching domain and path)
-    response.delete_cookie(
-        key="spotify_token",
-        domain=".aadilsomani.com",  # Crucial! Matches set_cookie
-        path="/"                    # Crucial! Matches set_cookie
-    )
-    
-    return response
+    return spotipy.Spotify(client_credentials_manager=client_credentials_manager)
 
 # ------------------------------------------------------------------
 # SETLIST & PLAYLIST HELPERS
@@ -185,18 +120,15 @@ def fetch_setlist_songs_fallback_html(url: str) -> tuple[list, dict]:
 
 
 def is_artist_similar(target_artist: str, found_artist: str, threshold: float = 0.6) -> bool:
-    """Check if the found Spotify artist matches or is sufficiently similar to the target artist."""
     if not target_artist or not found_artist:
         return True
     
     target = target_artist.lower().strip()
     found = found_artist.lower().strip()
     
-    # Substring match (e.g. "The Beatles" vs "Beatles", or featured artists)
     if target in found or found in target:
         return True
         
-    # Similarity ratio score
     ratio = SequenceMatcher(None, target, found).ratio()
     return ratio >= threshold
 
@@ -220,7 +152,6 @@ def search_track_on_spotify(sp: spotipy.Spotify, song_name: str, artist_name: st
         found_name = track["name"]
         found_artists = [a["name"] for a in track.get("artists", [])]
         
-        # Verify artist match
         if artist_name:
             match_found = any(is_artist_similar(artist_name, fa) for fa in found_artists)
             if not match_found:
@@ -242,24 +173,15 @@ def search_track_on_spotify(sp: spotipy.Spotify, song_name: str, artist_name: st
 # ------------------------------------------------------------------
 
 @app.post("/create_playlist")
-def create_playlist_endpoint(request: Request, payload: dict):
-    # 1. Check for logged-in user's token in cookies
-    access_token = request.cookies.get("spotify_token")
-    if not access_token:
-        raise HTTPException(
-            status_code=401, 
-            detail="User not logged in. Please visit /login first."
-        )
-
+def create_playlist_endpoint(payload: dict):
     setlist_url = payload.get("setlist_url")
-    playlist_name = payload.get("playlist_name")
-    public = payload.get("public", False)
+    playlist_name_hint = payload.get("playlist_name")
     artist_name_hint = payload.get("artist_name")
 
     if not setlist_url:
         raise HTTPException(status_code=400, detail="Missing setlist_url")
 
-    # 2. Get Songs and Metadata from Setlist
+    # 1. Get Songs and Metadata from Setlist
     songs = []
     metadata = {}
     
@@ -283,37 +205,18 @@ def create_playlist_endpoint(request: Request, payload: dict):
     tour_name = metadata.get("tour")
     venue_name = metadata.get("venue")
 
-    # 3. Create Spotify Client
-    try:
-        sp = spotipy.Spotify(auth=access_token)
-        current_user = sp.me()
-        user_id = current_user["id"]
-    except Exception:
-        raise HTTPException(status_code=401, detail="Session expired or invalid token.")
-
-    # 4. Generate Playlist Title dynamically if not explicitly provided
-    if not playlist_name or playlist_name in ["My Real Test Playlist", "Test Concert Playlist"]:
-        parts = []
-        if artist_name:
-            parts.append(artist_name)
-        if tour_name:
-            parts.append(tour_name)
-        if venue_name:
-            parts.append(venue_name)
-
+    # 2. Generate Dynamic Playlist Title
+    if not playlist_name_hint:
+        parts = [p for p in [artist_name, tour_name, venue_name] if p]
         playlist_name = " - ".join(parts) if parts else "Setlist Playlist"
+    else:
+        playlist_name = playlist_name_hint
 
-    print(f"[DEBUG] Final Playlist Name: '{playlist_name}'")
+    print(f"[DEBUG] Final Playlist Title: '{playlist_name}'")
 
-    playlist = sp.user_playlist_create(
-        user=user_id, 
-        name=playlist_name, 
-        public=public,
-        description=f"Generated from {setlist_url}"
-    )
-    playlist_id = playlist["id"]
-
-    # 5. Search, Validate, and Add Tracks
+    # 3. Search and Validate Tracks via App-Level Spotify Client (No User Account!)
+    sp = get_spotify_client()
+    
     track_uris = []
     missing_songs = []
     
@@ -330,17 +233,12 @@ def create_playlist_endpoint(request: Request, payload: dict):
     if missing_songs:
         print(f"[DEBUG] Missing or skipped songs ({len(missing_songs)}): {missing_songs}")
 
-    if track_uris:
-        for i in range(0, len(track_uris), 100):
-            sp.playlist_add_items(playlist_id, track_uris[i:i+100])
-
-    # 6. Return response containing missing songs for UI integration
+    # 4. Return data to frontend for user-side playlist creation
     return {
-        "playlist_id": playlist_id, 
         "playlist_name": playlist_name,
-        "spotify_playlist_url": f"https://open.spotify.com/playlist/{playlist_id}",
         "matched_count": len(track_uris),
         "total_count": len(songs),
+        "track_uris": track_uris,
         "missing_songs": missing_songs
     }
 
