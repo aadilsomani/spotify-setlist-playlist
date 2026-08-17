@@ -1,0 +1,6 @@
+fastapi
+uvicorn[standard]
+spotipy>=2.22.0
+requests
+beautifulsoup4
+python-dotenv

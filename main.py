@@ -1,3 +1,4 @@
+import os
 import spotipy
 from spotipy.oauth2 import SpotifyOAuth
 from selenium import webdriver
@@ -7,18 +8,18 @@ from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 import time
 
-# ---- Fill these in ----
-CLIENT_ID = ""
-CLIENT_SECRET = ""
-REDIRECT_URI = "http://127.0.0.1:8888/callback" # local
-USERNAME = ""  # usually the same as your account id
+# Read configuration from environment variables (do NOT commit secrets)
+CLIENT_ID = os.getenv("SPOTIPY_CLIENT_ID", "")
+CLIENT_SECRET = os.getenv("SPOTIPY_CLIENT_SECRET", "")
+REDIRECT_URI = os.getenv("SPOTIPY_REDIRECT_URI", "http://127.0.0.1:8888/callback")
+USERNAME = os.getenv("SPOTIFY_USER_ID", "")
 
 # Request scopes for creating and editing playlists
 scope = "playlist-modify-public playlist-modify-private"
 
 sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-    client_id=CLIENT_ID,
-    client_secret=CLIENT_SECRET,
+    client_id=CLIENT_ID or None,
+    client_secret=CLIENT_SECRET or None,
     redirect_uri=REDIRECT_URI,
     scope=scope
 ))
