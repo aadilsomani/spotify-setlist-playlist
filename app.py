@@ -90,9 +90,17 @@ def callback(request: Request):
 
 
 @app.get("/logout")
-def logout(response: Response):
-    response = RedirectResponse("/")
-    response.delete_cookie("spotify_token")
+def logout():
+    # 1. Redirect back to your frontend page
+    response = RedirectResponse("https://aadilsomani.com/setlisttoplaylist")
+    
+    # 2. Delete the cookie (MUST include matching domain and path)
+    response.delete_cookie(
+        key="spotify_token",
+        domain=".aadilsomani.com",  # Crucial! Matches set_cookie
+        path="/"                    # Crucial! Matches set_cookie
+    )
+    
     return response
 
 # ------------------------------------------------------------------
