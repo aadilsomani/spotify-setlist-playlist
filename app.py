@@ -80,8 +80,8 @@ def callback(request: Request):
         key="spotify_token",
         value=access_token,
         httponly=True,
-        secure=secure_cookie,
-        samesite="lax",
+        secure=True,
+        samesite="none",
         path="/",
         max_age=3600
     )
