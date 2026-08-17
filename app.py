@@ -81,7 +81,8 @@ def callback(request: Request):
         value=access_token,
         httponly=True,
         secure=True,
-        samesite="none",
+        samesite="lax",
+        domain= ".aadilsomani.com",
         path="/",
         max_age=3600
     )
