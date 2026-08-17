@@ -74,7 +74,7 @@ def callback(request: Request):
     if not access_token:
         raise HTTPException(status_code=400, detail="Failed to get access token from Spotify")
 
-    response = RedirectResponse("/")
+    response = RedirectResponse("https://aadilsomani.com/setlisttoplaylist")
     secure_cookie = SPOTIPY_REDIRECT_URI.startswith("https://")
     response.set_cookie(
         key="spotify_token",
