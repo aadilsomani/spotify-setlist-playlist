@@ -2,6 +2,8 @@
 
 An automation tool that scrapes concert setlists from **Setlist.fm** using Selenium and automatically recreates them as personal playlists on **Spotify** via the Spotipy API. 
 
+TRY LIVE: [Setlist to Playlist](https://aadilsomani.com/setlisttoplaylist)
+
 ## Features
 * **Automated Scraping:** Uses headless Chrome via Selenium to extract artist names and song tracks directly from any Setlist.fm URL.
 * **Smart Search:** Leverages the Spotify Web API to target exact matches based on track titles and artist filters.
